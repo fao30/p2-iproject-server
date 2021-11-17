@@ -3,12 +3,189 @@ const env = require("dotenv").config();
 const axios = require("axios");
 const jwt = require("jsonwebtoken");
 const { passHelper, jwtHelper } = require("../helper/helper");
-const { weather, currency } = require("../apis/weatherApi");
+const nodemailer = require("nodemailer");
+const {
+  weather,
+  currency,
+  xenditBalance,
+  xenditCreateVa,
+  xenditPayment,
+  xenditGetVa,
+  covidData,
+} = require("../apis/weatherApi");
 
 class Controller {
+  //CREATING VA
+  static async createVa(req, res, next) {
+    try {
+      let random = Math.floor(Math.random() * 9999999999999) + 1000000000000;
+      const date = new Date(Date.now() + 3600 * 1000 * 24);
+      // console.log(req);
+
+      let obj = {
+        external_id: `va-${random}`, //13 angka
+        bank_code: "BNI",
+        name: `${req.user.name}`,
+        expected_amount: `${req.body.amount}`,
+        expiration_date: date,
+      };
+      let balance = await xenditCreateVa(obj);
+      console.log(req.body.bookid);
+      console.log(balance.data.status);
+
+      let response = await BookTrip.update(
+        {
+          status: balance.data.status,
+          external_id: balance.data.external_id,
+          idXendit: balance.data.id,
+        },
+        { where: { id: req.body.bookid }, returning: true }
+      );
+      res.status(200).json(response);
+      // {
+      //   is_closed: false,
+      //   status: 'PENDING',
+      //   currency: 'IDR',
+      //   owner_id: '6193c2549a388575bcaaf040',
+      //   external_id: 'va-1111111111111',
+      //   bank_code: 'BNI',
+      //   merchant_code: '8808',
+      //   name: 'XDT-Fakhrul Arifin',
+      //   account_number: '8808999926748515',
+      //   is_single_use: false,
+      //   expiration_date: '2052-11-15T17:00:00.000Z',
+      //   id: '6193e2d1f932ce57cb2851f5'
+      // } INI VA XENDIT KU
+      // console.log(balance.data, "INI VA XENDIT KU");
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  //GET VA
+  static async getVa(req, res, next) {
+    try {
+      let obj = {
+        id: req.params.id,
+      };
+      let response = await xenditGetVa(obj);
+      res.status(200).json(response.data);
+      // {
+      //   is_closed: false,
+      //   status: 'ACTIVE',
+      //   currency: 'IDR',
+      //   owner_id: '6193c2549a388575bcaaf040',
+      //   external_id: 'va-1111111111111',
+      //   bank_code: 'BNI',
+      //   merchant_code: '8808',
+      //   name: 'XDT-Fakhrul Arifin',
+      //   account_number: '8808999926748515',
+      //   is_single_use: false,
+      //   expiration_date: '2052-11-15T17:00:00.000Z',
+      //   id: '6193e2d1f932ce57cb2851f5'
+      // } INI GET VA XENDIT KU
+      // console.log(balance.data, "INI GET VA XENDIT KU");
+    } catch (err) {
+      next(err);
+    }
+  }
+  //PAYMENT VA
+  static async payment(req, res, next) {
+    try {
+      // console.log(req, "DI PAYMENT");
+      let obj = {
+        amount: req.query.amount,
+        external_id: req.query.external_id,
+      };
+      let balance = await xenditPayment(obj);
+      if (balance.data.status === "COMPLETED") {
+        let response = await BookTrip.update(
+          {
+            status: balance.data.status,
+          },
+          { where: { external_id: req.query.external_id }, returning: true }
+        );
+        //MULAI DARI SINI
+        console.log(response[1][0], "RESPON DATAAAA");
+        let mailTransporter = nodemailer.createTransport({
+          service: "gmail",
+          auth: {
+            user: "fakhrulhacktiv@gmail.com",
+            pass: "123456QWERTYasdfgh",
+          },
+        });
+
+        let mailDetails = {
+          from: "fakhrulhacktiv@gmail.com",
+          to: req.user.email,
+          subject: "Booking Paid via Fao Tour And Travel",
+          text: `Thank you for your payment, Booking ID ${response[1][0].id} has been paid with PaymentId: ${response[1][0].paymentId} `,
+        };
+
+        mailTransporter.sendMail(mailDetails, function (err, data) {
+          if (err) {
+            console.log("Error Occurs");
+          } else {
+            console.log("Email sent successfully");
+          }
+        });
+
+        res.status(200).json(response.data);
+      }
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  //CALLBACK VA
+  static async callback(req, res, next) {
+    try {
+      console.log(req.body);
+      const { payment_id, external_id } = req.body;
+      if (payment_id) {
+        console.log(payment_id, external_id, "di KONTROLLERRR");
+        await BookTrip.update(
+          {
+            paymentId: payment_id,
+          },
+          { where: { external_id: external_id }, returning: true }
+        );
+      }
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  //CHECK PAYID
+  static async chechPayment(req, res, next) {
+    try {
+      // console.log(req, "DI PAYMENT");
+      let obj = {
+        amount: req.query.amount,
+        external_id: req.query.external_id,
+      };
+      console.log(obj, "DI CHECK PAYMENT");
+      let checkPayment = await BookTrip.findAll({
+        where: { external_id: obj.external_id },
+      });
+
+      res.status(200).json(checkPayment[0].paymentId);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async getBalance(req, res, next) {
+    try {
+      let balance = await xenditBalance();
+      console.log(balance.data.balance, "INI SALDO XENDIT KU");
+    } catch (err) {
+      next(err);
+    }
+  }
+
   static async currencyApi(req, res, next) {
     try {
-      console.log("CURRECY");
       let getCurency = await currency();
       let curr = +getCurency.data.data.IDR.toString().split(".")[0];
       res.status(200).json(curr);
@@ -22,7 +199,7 @@ class Controller {
     try {
       //   console.log(req);
       const { name, email, password, alamat, telephone } = req.body;
-      console.log(name);
+      console.log(name, email, password, alamat, telephone);
       let obj = {
         name,
         alamat,
@@ -126,6 +303,14 @@ class Controller {
       let slice = +temp.toString().split(".")[0];
       response[0].temperature = slice;
 
+      console.log(response[0].destinationName.split(",")[1]);
+
+      const axiosCovid = await covidData(
+        response[0].destinationName.split(",")[1]
+      );
+      console.log(axiosCovid.data, "AXIOSS COVIDDDDD");
+      response[0].covidData = axiosCovid.data[0];
+
       res.status(200).json(response);
     } catch (err) {
       console.log(err);
@@ -135,12 +320,14 @@ class Controller {
 
   static async deleteCart(req, res, next) {
     try {
+      console.log(req.user.id, req.body.MovieId, "DISINIIIII");
       const response = await BookTrip.destroy({
         where: {
           UserId: req.user.id,
           TourPackageId: req.body.MovieId,
         },
       });
+      // console.log(response);
       if (!response) {
         throw { name: "notFound", message: "Not Found Item" };
       } else {
